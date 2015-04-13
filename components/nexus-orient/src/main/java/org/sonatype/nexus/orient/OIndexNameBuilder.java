@@ -31,28 +31,28 @@ public class OIndexNameBuilder
 
   private String type;
 
-  private String field;
+  private String property;
 
   public OIndexNameBuilder type(final String type) {
     this.type = type;
     return this;
   }
 
-  public OIndexNameBuilder field(final String field) {
-    this.field = field;
+  public OIndexNameBuilder property(final String property) {
+    this.property = property;
     return this;
   }
 
   public String build() {
     // type is optional
-    checkState(field != null, "Field required");
+    checkState(property != null, "Property required");
 
     StringBuilder buff = new StringBuilder();
     if (type != null) {
       buff.append(type);
       buff.append(TYPE_SEPARATOR);
     }
-    buff.append(field);
+    buff.append(property);
     buff.append(SUFFIX);
 
     // OIndex names are always lower-case

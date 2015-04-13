@@ -51,7 +51,7 @@ public class ConfigurationEntityAdapter
 
   private static final String I_REPOSITORY_NAME = new OIndexNameBuilder()
       .type(DB_CLASS)
-      .field(P_REPOSITORY_NAME)
+      .property(P_REPOSITORY_NAME)
       .build();
 
   public ConfigurationEntityAdapter() {
