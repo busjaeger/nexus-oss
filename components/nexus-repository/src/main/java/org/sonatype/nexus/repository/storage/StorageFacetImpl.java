@@ -202,6 +202,11 @@ public class StorageFacetImpl
   }
 
   @Override
+  protected void doDestroy() throws Exception {
+    config = null;
+  }
+
+  @Override
   protected void doDelete() throws Exception {
     // TODO: Make this a soft delete and cleanup later so it doesn't block for large repos.
     try (StorageTx tx = openStorageTx(false)) {
