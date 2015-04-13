@@ -25,7 +25,7 @@ import static com.google.common.base.Preconditions.checkState;
  */
 public class OIndexNameBuilder
 {
-  public static final String SUFFIX_SEPARATOR = ".";
+  public static final String TYPE_SEPARATOR = ".";
 
   public static final String SUFFIX = "_idx";
 
@@ -34,7 +34,7 @@ public class OIndexNameBuilder
   private String field;
 
   public OIndexNameBuilder type(final String type) {
-    this.field = type;
+    this.type = type;
     return this;
   }
 
@@ -50,7 +50,7 @@ public class OIndexNameBuilder
     StringBuilder buff = new StringBuilder();
     if (type != null) {
       buff.append(type);
-      buff.append(SUFFIX_SEPARATOR);
+      buff.append(TYPE_SEPARATOR);
     }
     buff.append(field);
     buff.append(SUFFIX);
