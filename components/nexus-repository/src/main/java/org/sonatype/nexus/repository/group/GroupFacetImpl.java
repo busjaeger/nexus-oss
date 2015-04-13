@@ -14,6 +14,7 @@
 package org.sonatype.nexus.repository.group;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -28,6 +29,7 @@ import org.sonatype.nexus.repository.config.Configuration;
 import org.sonatype.nexus.repository.config.ConfigurationFacet;
 import org.sonatype.nexus.repository.manager.RepositoryManager;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.common.annotations.VisibleForTesting;
 import org.hibernate.validator.constraints.NotEmpty;
 
@@ -53,6 +55,7 @@ public class GroupFacetImpl
   static class Config
   {
     @NotEmpty
+    @JsonDeserialize(as = LinkedHashSet.class) // retain order
     public Set<String> memberNames;
 
     @Override
