@@ -53,7 +53,7 @@ public class GroupFacetImpl
   static class Config
   {
     @NotEmpty
-    Set<String> memberNames;
+    public Set<String> memberNames;
 
     @Override
     public String toString() {
