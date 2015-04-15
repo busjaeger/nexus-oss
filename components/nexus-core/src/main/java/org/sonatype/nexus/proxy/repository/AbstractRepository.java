@@ -12,6 +12,9 @@
  */
 package org.sonatype.nexus.proxy.repository;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static org.sonatype.nexus.proxy.ItemNotFoundException.reasonFor;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collection;
@@ -20,6 +23,8 @@ import java.util.Map;
 
 import javax.inject.Inject;
 
+import org.codehaus.plexus.util.StringUtils;
+import org.joda.time.DateTime;
 import org.sonatype.configuration.ConfigurationException;
 import org.sonatype.nexus.configuration.Configurator;
 import org.sonatype.nexus.configuration.ExternalConfiguration;
@@ -31,8 +36,8 @@ import org.sonatype.nexus.proxy.AccessDeniedException;
 import org.sonatype.nexus.proxy.IllegalOperationException;
 import org.sonatype.nexus.proxy.IllegalRequestException;
 import org.sonatype.nexus.proxy.ItemNotFoundException;
-import org.sonatype.nexus.proxy.ItemNotFoundException.ItemNotFoundInRepositoryReason;
 import org.sonatype.nexus.proxy.LocalStorageException;
+import org.sonatype.nexus.proxy.PreconditionFailedException;
 import org.sonatype.nexus.proxy.RepositoryNotAvailableException;
 import org.sonatype.nexus.proxy.ResourceStoreRequest;
 import org.sonatype.nexus.proxy.StorageException;
@@ -80,11 +85,6 @@ import org.sonatype.nexus.proxy.walker.WalkerFilter;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Maps;
-import org.codehaus.plexus.util.StringUtils;
-import org.joda.time.DateTime;
-
-import static com.google.common.base.Preconditions.checkNotNull;
-import static org.sonatype.nexus.proxy.ItemNotFoundException.reasonFor;
 
 /**
  * <p>
@@ -1007,6 +1007,9 @@ public abstract class AbstractRepository
       uidLock.lock(Action.read);
 
       try {
+        // check preconditions once locks acquired
+        checkPreconditions(item);
+
         // store it
         getLocalStorage().storeItem(this, item);
       }
@@ -1026,6 +1029,47 @@ public abstract class AbstractRepository
     }
     else {
       eventBus().post(new RepositoryItemEventStoreUpdate(this, item));
+    }
+  }
+
+  /**
+   * Checks that preconditions for storing item are satisfied
+   *
+   * @param item
+   * @throws LocalStorageException
+   * @throws PreconditionFailedException
+   */
+  private void checkPreconditions(StorageItem item) throws LocalStorageException, PreconditionFailedException {
+    final ResourceStoreRequest request = item.getResourceStoreRequest();
+    final String expectedSha1 = request.getMatch();
+    final long expectedTimestamp = item.getResourceStoreRequest().getIfUnmodifiedSince();
+
+    // retrieve existing item only if precondition needs checking
+    if (expectedTimestamp == 0 && expectedSha1 == null) {
+      return;
+    }
+
+    final StorageItem actualItem;
+    try {
+      actualItem = getLocalStorage().retrieveItem(this, item.getResourceStoreRequest());
+    } catch (ItemNotFoundException e) {
+      throw new PreconditionFailedException("resource no longer exists", e);
+    }
+
+    // check modified
+    if (expectedTimestamp != 0) {
+      final long actualTimestamp = actualItem.getModified();
+      if (actualTimestamp > expectedTimestamp) {
+        throw new PreconditionFailedException("expected modified timestamp " + expectedTimestamp + " does not match actual modified timestamp " + actualTimestamp);
+      }
+    }
+
+    // check sha1
+    if (expectedSha1 != null) {
+      final String etag = "{SHA1{" + actualItem.getRepositoryItemAttributes().get(StorageFileItem.DIGEST_SHA1_KEY) + "}}";
+      if (!etag.equals(expectedSha1)) {
+        throw new PreconditionFailedException("expected sha1 " + expectedSha1 + " does not match actual sha1 " + etag);
+      }
     }
   }
 

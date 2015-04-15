@@ -37,6 +37,7 @@ import org.sonatype.nexus.proxy.ItemNotFoundException;
 import org.sonatype.nexus.proxy.LocalStorageEOFException;
 import org.sonatype.nexus.proxy.NoSuchRepositoryException;
 import org.sonatype.nexus.proxy.NoSuchResourceStoreException;
+import org.sonatype.nexus.proxy.PreconditionFailedException;
 import org.sonatype.nexus.proxy.RemoteStorageTransportOverloadedException;
 import org.sonatype.nexus.proxy.RepositoryNotAvailableException;
 import org.sonatype.nexus.proxy.RequestContext;
@@ -63,6 +64,7 @@ import com.google.common.base.Stopwatch;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Range;
+
 import org.apache.shiro.SecurityUtils;
 import org.apache.shiro.subject.Subject;
 import org.slf4j.Logger;
@@ -186,6 +188,12 @@ public class ContentServlet
       result.setIfModifiedSince(ifModifiedSince);
     }
 
+    // honor if-unmodified-since (conditional PUT)
+    final long ifUnmodifiedSince = request.getDateHeader("if-unmodified-since");
+    if (ifUnmodifiedSince > -1) {
+      result.setIfUnmodifiedSince(ifUnmodifiedSince);
+    }
+
     // honor if-none-match
     String ifNoneMatch = request.getHeader("if-none-match");
     if (!Strings.isNullOrEmpty(ifNoneMatch)) {
@@ -197,6 +205,16 @@ public class ContentServlet
       // still, WHAT we have here is basically what client sent (should be what Nx sent once to client, and client
       // cached it), see method doGetFile that will basically handle the if-none-match condition.
       result.setIfNoneMatch(ifNoneMatch);
+    }
+
+    // honor if-match (conditional PUT)
+    String ifMatch = request.getHeader("if-match");
+    if (!Strings.isNullOrEmpty(ifMatch)) {
+      // see comments on 'if-none-match'
+      if (ifMatch.startsWith("\"") && ifMatch.endsWith("\"")) {
+        ifMatch = ifMatch.substring(1, ifMatch.length() - 1);
+      }
+      result.setIfMatch(ifMatch);
     }
 
     // stuff in the originating remote address
@@ -286,6 +304,9 @@ public class ContentServlet
     }
     else if (exception instanceof ItemNotFoundException) {
       responseCode = SC_NOT_FOUND;
+    }
+    else if (exception instanceof PreconditionFailedException) {
+      responseCode = SC_PRECONDITION_FAILED;
     }
     else if (exception instanceof AccessDeniedException) {
       request.setAttribute(Constants.ATTR_KEY_REQUEST_IS_AUTHZ_REJECTED, Boolean.TRUE);

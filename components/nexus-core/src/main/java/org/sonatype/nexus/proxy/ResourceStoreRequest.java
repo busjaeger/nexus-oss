@@ -304,6 +304,21 @@ public class ResourceStoreRequest
   }
 
   /**
+   * Returns the timestamp to check against.
+   */
+  public long getIfUnmodifiedSince() {
+    return getRequestContext().getIfUnmodifiedSince();
+  }
+
+  /**
+   * Sets the timestamp to check against.
+   */
+  public ResourceStoreRequest setIfUnmodifiedSince(long ifUnmodifiedSince) {
+    getRequestContext().setIfUnmodifiedSince(ifUnmodifiedSince);
+    return this;
+  }
+
+  /**
    * Gets the ETag (SHA1 in Nexus) to check item against.
    */
   public String getIfNoneMatch() {
@@ -315,6 +330,21 @@ public class ResourceStoreRequest
    */
   public ResourceStoreRequest setIfNoneMatch(String tag) {
     getRequestContext().setIfNoneMatch(tag);
+    return this;
+  }
+
+  /**
+   * Gets the ETag (SHA1 in Nexus) to check item against.
+   */
+  public String getMatch() {
+    return getRequestContext().getIfMatch();
+  }
+
+  /**
+   * Sets the ETag (SHA1 in Nexus) to check item against.
+   */
+  public ResourceStoreRequest setIfMatch(String tag) {
+    getRequestContext().setIfMatch(tag);
     return this;
   }
 
@@ -396,4 +426,5 @@ public class ResourceStoreRequest
         + ", pathStack=" + pathStack + ", processedRepositories=" + processedRepositories + ", appliedMappings="
         + appliedMappings + '}';
   }
+
 }

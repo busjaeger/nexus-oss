@@ -22,6 +22,7 @@ import org.sonatype.nexus.proxy.repository.GroupRepository;
 import org.sonatype.nexus.proxy.repository.ProxyRepository;
 
 import com.google.common.collect.Maps;
+
 import org.codehaus.plexus.util.StringUtils;
 
 /**
@@ -78,9 +79,19 @@ public class RequestContext
   public static final String CTX_CONDITION_IF_MODIFIED_SINCE = "request.condition.ifModifiedSince";
 
   /**
+   * Context key for condition "if-unmodified-since"
+   */
+  public static final String CTX_CONDITION_IF_UNMODIFIED_SINCE = "request.condition.ifUnmodifiedSince";
+
+  /**
    * Context key for condition "if-none-match"
    */
   public static final String CTX_CONDITION_IF_NONE_MATCH = "request.condition.ifNoneMatch";
+
+  /**
+   * Context key for condition "if-match"
+   */
+  public static final String CTX_CONDITION_IF_MATCH = "request.condition.ifMatch";
 
   /**
    * Context key to mark request as used for auth check only, so repo impl will know there is no work required (i.e.
@@ -340,6 +351,30 @@ public class RequestContext
   }
 
   /**
+   * Returns the timestamp to check against.
+   */
+  public long getIfUnmodifiedSince() {
+    if (containsKey(CTX_CONDITION_IF_UNMODIFIED_SINCE)) {
+      return (Long) get(CTX_CONDITION_IF_UNMODIFIED_SINCE);
+    }
+    else {
+      return 0;
+    }
+  }
+
+  /**
+   * Sets the timestamp to check against.
+   */
+  public void setIfUnmodifiedSince(long ifUnmodifiedSince) {
+    if (ifUnmodifiedSince != 0) {
+      put(CTX_CONDITION_IF_UNMODIFIED_SINCE, Long.valueOf(ifUnmodifiedSince));
+    }
+    else {
+      remove(CTX_CONDITION_IF_UNMODIFIED_SINCE);
+    }
+  }
+
+  /**
    * Gets the ETag (SHA1 in Nexus) to check item against.
    */
   public String getIfNoneMatch() {
@@ -355,6 +390,25 @@ public class RequestContext
     }
     else {
       remove(CTX_CONDITION_IF_NONE_MATCH);
+    }
+  }
+
+  /**
+   * Gets the ETag (SHA1 in Nexus) to check item against.
+   */
+  public String getIfMatch() {
+    return (String) get(CTX_CONDITION_IF_MATCH);
+  }
+
+  /**
+   * Sets the ETag (SHA1 in Nexus) to check item against.
+   */
+  public void setIfMatch(String tag) {
+    if (!StringUtils.isEmpty(tag)) {
+      put(CTX_CONDITION_IF_MATCH, tag);
+    }
+    else {
+      remove(CTX_CONDITION_IF_MATCH);
     }
   }
 
@@ -430,4 +484,5 @@ public class RequestContext
   public String toString() {
     return "RequestContext{" + "this=" + super.toString() + ", parent=" + parent + '}';
   }
+
 }
