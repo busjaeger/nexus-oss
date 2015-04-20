@@ -12,12 +12,29 @@
  */
 package org.sonatype.nexus.content.internal;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.io.ByteStreams.limit;
+import static javax.servlet.http.HttpServletResponse.SC_BAD_REQUEST;
+import static javax.servlet.http.HttpServletResponse.SC_CREATED;
+import static javax.servlet.http.HttpServletResponse.SC_FOUND;
+import static javax.servlet.http.HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
+import static javax.servlet.http.HttpServletResponse.SC_METHOD_NOT_ALLOWED;
+import static javax.servlet.http.HttpServletResponse.SC_NOT_FOUND;
+import static javax.servlet.http.HttpServletResponse.SC_NOT_MODIFIED;
+import static javax.servlet.http.HttpServletResponse.SC_NO_CONTENT;
+import static javax.servlet.http.HttpServletResponse.SC_PARTIAL_CONTENT;
+import static javax.servlet.http.HttpServletResponse.SC_REQUESTED_RANGE_NOT_SATISFIABLE;
+import static javax.servlet.http.HttpServletResponse.SC_SERVICE_UNAVAILABLE;
+
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 
@@ -29,6 +46,10 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.shiro.SecurityUtils;
+import org.apache.shiro.subject.Subject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.sonatype.nexus.configuration.application.NexusConfiguration;
 import org.sonatype.nexus.proxy.AccessDeniedException;
 import org.sonatype.nexus.proxy.IllegalOperationException;
@@ -51,6 +72,7 @@ import org.sonatype.nexus.proxy.item.StorageLinkItem;
 import org.sonatype.nexus.proxy.router.RepositoryRouter;
 import org.sonatype.nexus.proxy.storage.UnsupportedStorageOperationException;
 import org.sonatype.nexus.util.SystemPropertiesHelper;
+import org.sonatype.nexus.util.io.StreamSupport;
 import org.sonatype.nexus.web.BaseUrlHolder;
 import org.sonatype.nexus.web.Constants;
 import org.sonatype.nexus.web.ErrorStatusException;
@@ -59,18 +81,10 @@ import org.sonatype.nexus.web.WebUtils;
 import org.sonatype.nexus.web.internal.ErrorPageFilter;
 import org.sonatype.sisu.goodies.common.Throwables2;
 
+import com.google.common.base.Splitter;
 import com.google.common.base.Stopwatch;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Range;
-import org.apache.shiro.SecurityUtils;
-import org.apache.shiro.subject.Subject;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.io.ByteStreams.limit;
-import static javax.servlet.http.HttpServletResponse.*;
 
 /**
  * Provides access to repositories contents.
@@ -149,7 +163,7 @@ public class ContentServlet
     this.repositoryRouter = checkNotNull(repositoryRouter);
     this.contentRenderer = checkNotNull(contentRenderer);
     this.webUtils = checkNotNull(webUtils);
-    logger.debug("dereferenceLinks={}", DEREFERENCE_LINKS);
+    this.logger.debug("dereferenceLinks={}", DEREFERENCE_LINKS);
   }
 
   /**
@@ -173,7 +187,7 @@ public class ContentServlet
     // honor the localOnly, remoteOnly and asExpired (but remoteOnly and asExpired only for non-anon users)
     // as those two actually makes Nexus perform a remote request
     result.setRequestLocalOnly(isLocal(request, resourceStorePath));
-    if (!Objects.equals(nexusConfiguration.getAnonymousUsername(),
+    if (!Objects.equals(this.nexusConfiguration.getAnonymousUsername(),
         result.getRequestContext().get(AccessManager.REQUEST_USER))) {
       result.setRequestRemoteOnly(REQ_QP_FORCE_REMOTE_VALUE.equals(request.getParameter(REQ_QP_FORCE_PARAMETER)));
       result.setRequestAsExpired(REQ_QP_FORCE_EXPIRED_VALUE.equals(request.getParameter(REQ_QP_FORCE_PARAMETER)));
@@ -250,7 +264,7 @@ public class ContentServlet
   private void handleException(final HttpServletRequest request, final Exception exception)
       throws ErrorStatusException, IOException
   {
-    logger.trace("Exception", exception);
+    this.logger.trace("Exception", exception);
     int responseCode;
 
     if (exception instanceof LocalStorageEOFException) {
@@ -296,18 +310,18 @@ public class ContentServlet
     }
     else if (exception instanceof IOException) {
       // log and rethrow IOException, as it is handled in special way, see the ErrorPageFilter
-      if (logger.isDebugEnabled()) {
-        logger.warn("{} {}", exception.toString(), requestDetails(request), exception);
+      if (this.logger.isDebugEnabled()) {
+        this.logger.warn("{} {}", exception.toString(), requestDetails(request), exception);
       }
-      else if (logger.isWarnEnabled()) {
-        logger.warn("{} {}", Throwables2.explain(exception), requestDetails(request));
+      else if (this.logger.isWarnEnabled()) {
+        this.logger.warn("{} {}", Throwables2.explain(exception), requestDetails(request));
       }
       throw (IOException) exception;
     }
     else {
       responseCode = SC_INTERNAL_SERVER_ERROR;
-      if (logger.isWarnEnabled()) {
-        logger.warn("{} {}", exception.getMessage(), requestDetails(request), exception);
+      if (this.logger.isWarnEnabled()) {
+        this.logger.warn("{} {}", exception.getMessage(), requestDetails(request), exception);
       }
     }
 
@@ -373,14 +387,14 @@ public class ContentServlet
     final ResourceStoreRequest rsr = getResourceStoreRequest(request);
     try {
       try {
-        StorageItem item = repositoryRouter.retrieveItem(rsr);
+        StorageItem item = this.repositoryRouter.retrieveItem(rsr);
         if (item instanceof StorageLinkItem) {
           final StorageLinkItem link = (StorageLinkItem) item;
           if (DEREFERENCE_LINKS) {
             item = dereferenceLink(link);
           }
           else {
-            webUtils.sendTemporaryRedirect(response, getLinkTargetUrl(link));
+            this.webUtils.sendTemporaryRedirect(response, getLinkTargetUrl(link));
             return;
           }
         }
@@ -427,7 +441,7 @@ public class ContentServlet
       final String hop = currentLink.getRepositoryItemUid().getKey();
       if (!hops.contains(hop)) {
         hops.add(hop);
-        final StorageItem item = repositoryRouter.dereferenceLink(currentLink);
+        final StorageItem item = this.repositoryRouter.dereferenceLink(currentLink);
         if (!(item instanceof StorageLinkItem)) {
           return item;
         }
@@ -490,51 +504,70 @@ public class ContentServlet
       return;
     }
 
-    response.setHeader("Content-Type", file.getMimeType());
     response.setDateHeader("Last-Modified", file.getModified());
 
-    // content-length, if known
-    if (file.getLength() != ContentLocator.UNKNOWN_LENGTH) {
-      // Note: response.setContentLength Servlet API method uses ints (max 2GB file)!
-      // TODO: apparently, some Servlet containers follow serlvet API and assume
-      // contents can have 2GB max, so even this workaround below in inherently unsafe.
-      // Jetty is checked, and supports this (uses long internally), but unsure for other containers
-      response.setHeader("Content-Length", String.valueOf(file.getLength()));
-    }
+    final long contentLength = file.getLength(); // seems like 'length' is not lock-guarded?
+    final List<ContentRange> ranges = getRanges(request, contentLength);
 
-    final List<Range<Long>> ranges = getRequestedRanges(request, file.getLength());
-
-    // pour the content, but only if needed (this method will be called even for HEAD reqs, but with content tossed
+    // return content body only if needed (this method will be called even for HEAD reqs, but with content tossed
     // away), so be conservative as getting input stream involves locking etc, is expensive
     final boolean contentNeeded = "GET".equalsIgnoreCase(request.getMethod());
-    if (ranges.isEmpty()) {
+    // no or syntactically invalid range header: return full content
+    if (ranges == null) {
+      response.setContentType(file.getMimeType());
+      if (file.getLength() != ContentLocator.UNKNOWN_LENGTH) {
+        response.setHeader("Content-Length", String.valueOf(file.getLength()));
+      }
       if (contentNeeded) {
-        webUtils.sendContent(file.getInputStream(), response);
+        this.webUtils.sendContent(file.getInputStream(), response);
       }
     }
-    else if (ranges.size() > 1) {
-      throw new ErrorStatusException(SC_NOT_IMPLEMENTED, "Not Implemented",
-          "Multiple ranges not yet supported.");
-    }
+    // syntactically valid range header: return partial content
     else {
-      final Range<Long> range = ranges.get(0);
-      if (!isRequestedRangeSatisfiable(file, range)) {
+      // no range satisfiable: respond with 416
+      if (ranges.isEmpty()) {
         response.setStatus(SC_REQUESTED_RANGE_NOT_SATISFIABLE);
-        response.setHeader("Content-Length", "0");
-        response.setHeader("Content-Range", "bytes */" + file.getLength());
-        return;
+        response.setHeader("Content-Range", "bytes */" + String.valueOf(contentLength));
       }
-      final long bodySize = 1 + range.upperEndpoint() - range.lowerEndpoint();
-      response.setStatus(SC_PARTIAL_CONTENT);
-      response.setHeader("Content-Length", String.valueOf(bodySize));
-      response.setHeader("Content-Range",
-          range.lowerEndpoint() + "-" + range.upperEndpoint() + "/" + file.getLength());
-      if (contentNeeded) {
-        try (final InputStream in = file.getInputStream()) {
-          in.skip(range.lowerEndpoint());
-          webUtils.sendContent(limit(in, bodySize), response);
+      // single satisfiable range: partial content with standard body
+      else if (ranges.size() == 1) {
+        final ContentRange range = ranges.get(0);
+        response.setStatus(SC_PARTIAL_CONTENT);
+        response.setContentType(file.getMimeType());
+        response.setContentLength((int) range.size());
+        response.setHeader("Content-Range", range.toHeaderValue());
+
+        if (contentNeeded) {
+          try (final InputStream in = file.getInputStream()) {
+            try (final OutputStream out = response.getOutputStream()) {
+              in.skip(range.first());
+              StreamSupport.copy(limit(in, range.size()), out, 65536);
+            }
+          }
         }
       }
+      // multiple satisfiable consecutive ranges: send multi-part response with range content        
+      else {
+        try (final MultiPartOutputStream multi = new MultiPartOutputStream(response.getOutputStream())) {
+          response.setStatus(SC_PARTIAL_CONTENT);
+          final String boundary = multi.getBoundary();
+          response.setContentType("multipart/byteranges; boundary="+boundary);
+          final String mimeType = file.getMimeType();
+          response.setContentLength(computeMultiPartContentLength(ranges, boundary, mimeType));
+
+          if (contentNeeded) {
+            try (InputStream in = file.getInputStream()) {
+              long pos = 0;
+              for (final ContentRange range : ranges) {
+                multi.startPart(mimeType, new String[] {"Content-Range: " + range.toHeaderValue()});
+                in.skip(range.first() - pos);
+                StreamSupport.copy(limit(in, range.size()), multi, 65536);
+                pos = range.last() + 1;
+              }
+            }
+          }
+        }
+      }    
     }
   }
 
@@ -559,11 +592,11 @@ public class ContentServlet
       return;
     }
     // send no cache headers, as any of these responses should not be cached, ever
-    webUtils.addNoCacheResponseHeaders(response);
+    this.webUtils.addNoCacheResponseHeaders(response);
     // perform fairly expensive operation of fetching children from Nx
     final Collection<StorageItem> children = coll.list();
     // render the page
-    contentRenderer.renderCollection(request, response, coll, children);
+    this.contentRenderer.renderCollection(request, response, coll, children);
   }
 
   /**
@@ -577,8 +610,8 @@ public class ContentServlet
       throws IOException
   {
     // send no cache headers, as any of these responses should not be cached, ever
-    webUtils.addNoCacheResponseHeaders(response);
-    contentRenderer.renderRequestDescription(request, response, rsr, item, e);
+    this.webUtils.addNoCacheResponseHeaders(response);
+    this.contentRenderer.renderRequestDescription(request, response, rsr, item, e);
   }
 
   // PUT
@@ -589,7 +622,7 @@ public class ContentServlet
   {
     final ResourceStoreRequest rsr = getResourceStoreRequest(request);
     try {
-      repositoryRouter.storeItem(rsr, request.getInputStream(), null);
+      this.repositoryRouter.storeItem(rsr, request.getInputStream(), null);
       ((Stopwatch) rsr.getRequestContext().get(STOPWATCH_KEY)).stop();
       response.setStatus(SC_CREATED);
     }
@@ -607,7 +640,7 @@ public class ContentServlet
   {
     final ResourceStoreRequest rsr = getResourceStoreRequest(request);
     try {
-      repositoryRouter.deleteItem(rsr);
+      this.repositoryRouter.deleteItem(rsr);
       response.setStatus(SC_NO_CONTENT);
       ((Stopwatch) rsr.getRequestContext().get(STOPWATCH_KEY)).stop();
     }
@@ -620,58 +653,112 @@ public class ContentServlet
   // ==
 
   /**
-   * Parses the "Range" header of the HTTP request and builds up a list of {@link Range}. If no range header found, or
-   * any problem occurred during parsing it (ie. is malformed), empty collection is returned.
-   *
-   * @return list of {@link Range}, never {@code null}.
+   * Tries to parse the Range header in the given request. If no header present, returns null.
+   * Otherwise, the value of the range header is parsed. If the value is syntactically invalid in
+   * any way, a warning is logged and null is returned. Otherwise all ranges are parsed and the
+   * subset that are satisfiable are returned.
+   * 
+   * @param request http request
+   * @param contentLength entity body length
+   * @return null if no range header specified or range header syntactically invalid, list of
+   *         satisfiable ranges otherwise
    */
-  protected List<Range<Long>> getRequestedRanges(final HttpServletRequest request, final long contentLength) {
-    // TODO: Current limitation: only one Range of bytes supported in forms of "-X", "X-Y" (where X<Y) and "X-".
-    final String rangeHeader = request.getHeader("Range");
-    if (!Strings.isNullOrEmpty(rangeHeader)) {
-      try {
-        if (rangeHeader.startsWith("bytes=") && rangeHeader.length() > 6 && !rangeHeader.contains(",")) {
-          // Range: bytes=500-999 (from 500th byte to 999th)
-          // Range: bytes=500- (from 500th byte to the end)
-          // Range: bytes=-999 (from 0th byte to the 999th byte, not by RFC but widely supported)
-          final String rangeValue = rangeHeader.substring(6, rangeHeader.length());
-          if (rangeValue.startsWith("-")) {
-            return Collections.singletonList(Range.closed(0L, Long.parseLong(rangeValue.substring(1))));
-          }
-          else if (rangeValue.endsWith("-")) {
-            return Collections.singletonList(Range.closed(
-                Long.parseLong(rangeValue.substring(0, rangeValue.length() - 1)), contentLength - 1));
-          }
-          else if (rangeValue.contains("-")) {
-            final String[] parts = rangeValue.split("-");
-            return Collections.singletonList(Range.closed(Long.parseLong(parts[0]), Long.parseLong(parts[1])));
-          }
-          else {
-            logger.info("Malformed HTTP Range value: {}, ignoring it", rangeHeader);
-          }
-        }
-        else {
-          logger.info(
-              "Nexus does not support non-byte or multiple HTTP Ranges, sending complete content: Range value {}",
-              rangeHeader);
-        }
-      }
-      catch (Exception e) {
-        if (logger.isDebugEnabled()) {
-          logger.info("Problem parsing Range value: {}, ignoring it", rangeHeader, e);
-        }
-        else {
-          logger.info("Problem parsing Range value: {}, ignoring it", rangeHeader);
-        }
-      }
+  protected List<ContentRange> getRanges(final HttpServletRequest request, final long contentLength) {
+    final String header = request.getHeader("Range");
+    if (header == null) {
+      return null;
     }
-    return Collections.emptyList();
+    try {
+      final List<ContentRange> ranges = getSatisfiableRanges(header, contentLength);
+      // treat non-ascending ranges as not satisfiable, because it would require multiple scans over
+      // the file
+      // which implies releasing the file lock in the process. This is stricter than the spec, which
+      // says SHOULD.
+      return ascending(ranges) ? ranges : Collections.<ContentRange>emptyList();
+    } catch (IllegalArgumentException e) {
+      this.logger.info("Ignoring syntactically invalid range header: " + e.getMessage());
+      return null;
+    }
   }
 
   /**
-   * Returns {@code true} if the {@link Range} is applicable to file (file full closed range encloses passed in range).
+   * Parses the given ranges-specifier. Returns the list of satisfiable ranges which may be an empty
+   * collection. Throws an error for syntatically incorrect headers.
+   * 
+   * See: http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35.1
+   * 
+   * @param rangeHeader
+   * @param contentLength entity body length
+   * @return list of satisfiable ranges
+   * @throws IllegalArgumentException if the range header is syntactically incorrect
    */
-  protected boolean isRequestedRangeSatisfiable(final StorageFileItem file, final Range<Long> range) {
-    return Range.closed(0L, file.getLength() - 1).encloses(range);
+  protected List<ContentRange> getSatisfiableRanges(final String rangeHeader, final long contentLength) {
+    if (!rangeHeader.startsWith("bytes=")) {
+      throw new IllegalArgumentException("'bytes=' prefix missing");
+    }
+    final List<ContentRange> ranges = new ArrayList<>();
+    // parse ranges-specifier http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35.1
+    for (String range : Splitter.on(',').split(rangeHeader.substring(6, rangeHeader.length()))) {
+      // lists may contain white-spaces http://www.w3.org/Protocols/rfc2616/rfc2616-sec2.html#sec2.1
+      range = range.trim();
+      // lists may contain empty elements
+      if (range.length() == 0) {
+        continue;
+      }
+      // parse range
+      final ContentRange r = ContentRange.parseContentRange(range, contentLength);
+      // ignore unsatisfiable ranges
+      if (r == null) {
+        this.logger.info("Ignoring unsatisfiable byte range " + range);
+        continue;
+      }
+      ranges.add(r);
+    }
+    return ranges;
   }
+
+  /**
+   * Checks if the given range are ascending, i.e. if each lower bound in the set is higher than the
+   * upper bound of its predecessor.
+   * 
+   * @param ranges
+   * @return
+   */
+  static boolean ascending(Iterable<? extends ContentRange> ranges) {
+    boolean consecutive = true;
+    final Iterator<? extends ContentRange> it = ranges.iterator();
+    if (it.hasNext()) {
+      ContentRange prev = it.next();
+      while (it.hasNext()) {
+        ContentRange next = it.next();
+        if (prev.last() >= next.first()) {
+          consecutive = false;
+          break;
+        }
+        prev = next;
+      }
+    }
+    return consecutive;
+  }
+
+  /**
+   * Computes the length of a multi-part body for the given content ranges. The boundary
+   * 
+   * @param ranges
+   * @param boundary
+   * @param mimeType
+   * @return
+   */
+  static int computeMultiPartContentLength(final List<ContentRange> ranges, final String boundary, final String mimeType) {
+    int length = 0;
+    for (final ContentRange range : ranges) {
+      length += 2 + 2 + boundary.length() + 2 + //
+          "Content-Type".length() + 2 + mimeType.length() + 2 + //
+          "Content-Range".length() + 2 + range.toHeaderValue().length() + 2 + //
+          2 + range.size();
+    }
+    length += 2 + 2 + boundary.length() + 2 + 2;
+    return length;
+  }
+
 }
